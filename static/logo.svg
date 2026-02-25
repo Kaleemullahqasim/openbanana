@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none">
+  <!-- Background circle -->
+  <circle cx="60" cy="60" r="58" fill="#111111" stroke="#2a2a2a" stroke-width="1.5"/>
+
+  <!-- Banana arc — thick geometric crescent -->
+  <path d="M 30 78
+           C 28 55, 38 30, 62 24
+           C 80 20, 94 32, 92 50
+           C 90 34, 78 26, 62 30
+           C 42 36, 34 58, 36 78
+           Z"
+        fill="#facc15"/>
+
+  <!-- Highlight sheen -->
+  <path d="M 40 70
+           C 38 52, 46 34, 62 30
+           C 52 33, 43 50, 42 70
+           Z"
+        fill="#fde68a" opacity="0.5"/>
+
+  <!-- Tip cap -->
+  <ellipse cx="31.5" cy="78.5" rx="4.5" ry="3" fill="#a16207" transform="rotate(-15 31.5 78.5)"/>
+
+  <!-- Subtle tagline dots (open-source indicator) -->
+  <circle cx="72" cy="88" r="2.5" fill="#facc15" opacity="0.7"/>
+  <circle cx="80" cy="88" r="2.5" fill="#facc15" opacity="0.45"/>
+  <circle cx="88" cy="88" r="2.5" fill="#facc15" opacity="0.2"/>
+</svg>

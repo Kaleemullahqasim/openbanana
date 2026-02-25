@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Edit Banana — CLI entry. Image/PDF to editable DrawIO XML.
+OpenBanana — CLI entry. Image/PDF to editable DrawIO XML.
 
 Pipeline: Input -> Segmentation (SAM3) -> Text Extraction (OCR) -> XML/PPTX generation.
 See README for setup (config, models, env).
@@ -91,6 +91,7 @@ class Pipeline:
         self._metric_evaluator = None
         self._refinement_processor = None
         self._upscale_model = None
+        self._vlm_labeler = None
         
         # 超分配置
         self._upscale_min_dimension = self.config.get('upscale', {}).get('min_dimension', UPSCALE_MIN_DIMENSION)
@@ -100,7 +101,7 @@ class Pipeline:
     def text_restorer(self):
         """OCR/text step; None if deps missing."""
         if self._text_restorer is None and TextRestorer is not None:
-            self._text_restorer = TextRestorer(formula_engine='none')
+            self._text_restorer = TextRestorer(formula_engine='pix2text')
         return self._text_restorer
     
     @property
@@ -151,23 +152,49 @@ class Pipeline:
         if self._upscale_model is None:
             self._upscale_model = UpscaleModel(model_path=None)  # 使用默认路径
         return self._upscale_model
+
+    @property
+    def vlm_labeler(self):
+        """Lazy VLM labeler (uses local Ollama vision model)."""
+        if self._vlm_labeler is None:
+            from modules.vlm_labeler import VLMLabeler
+            multimodal_cfg = self.config.get('multimodal', {})
+            self._vlm_labeler = VLMLabeler(multimodal_cfg)
+        return self._vlm_labeler
     
+    # Max long edge before SAM3 — larger images cause OOM / extreme slowness
+    _MAX_SAM3_DIMENSION = 1500
+
     def _preprocess_image(self, image_path: str, output_dir: str) -> tuple:
-        """Optional upscale when image is small. Returns (path, was_upscaled, scale)."""
+        """Downscale oversized images and optionally upscale tiny ones. Returns (path, was_upscaled, scale)."""
         from PIL import Image
+
+        # --- Downscale large images first (always, regardless of upscale setting) ---
+        with Image.open(image_path) as img:
+            width, height = img.size
+
+        max_dim = max(width, height)
+        if max_dim > self._MAX_SAM3_DIMENSION:
+            scale = self._MAX_SAM3_DIMENSION / max_dim
+            new_w = int(width * scale)
+            new_h = int(height * scale)
+            print(f"   [预处理] 原图 {width}x{height} 超过 {self._MAX_SAM3_DIMENSION}px，缩小至 {new_w}x{new_h}")
+            with Image.open(image_path) as img:
+                downscaled = img.convert("RGB").resize((new_w, new_h), Image.LANCZOS)
+            downscaled_path = os.path.join(output_dir, "downscaled_input.png")
+            downscaled.save(downscaled_path)
+            print(f"   [预处理] 已保存: {downscaled_path}")
+            return downscaled_path, False, scale
 
         if not self._upscale_enabled:
             return image_path, False, 1.0
-        
+
         # 检查依赖是否可用
         if not SPANDREL_AVAILABLE:
             print("   [预处理] 超分依赖未安装，跳过")
             return image_path, False, 1.0
-        
-        # 读取原图尺寸
-        with Image.open(image_path) as img:
-            width, height = img.size
-            min_dim = min(width, height)
+
+        min_dim = min(width, height)
         
         # 判断是否需要超分
         if min_dim >= self._upscale_min_dimension:
@@ -210,8 +237,17 @@ class Pipeline:
                       output_dir: str = None,
                       with_refinement: bool = False,
                       with_text: bool = True,
-                      groups: List[PromptGroup] = None) -> Optional[str]:
-        """Run pipeline on one image. Returns output XML path or None."""
+                      groups: List[PromptGroup] = None,
+                      stage_callback=None) -> Optional[str]:
+        """Run pipeline on one image. Returns output XML path or None.
+
+        stage_callback: optional callable(str) called with a short status
+                        message before each major stage (used by the web server
+                        to expose live progress via the /job endpoint).
+        """
+        def _stage(msg: str):
+            if stage_callback:
+                stage_callback(msg)
         print(f"\n{'='*60}")
         print(f"开始处理: {image_path}")
         print(f"{'='*60}")
@@ -225,6 +261,7 @@ class Pipeline:
         os.makedirs(img_output_dir, exist_ok=True)
         
         print("\n[0] Preprocess...")
+        _stage("Preprocessing image…")
         processed_image_path, was_upscaled, scale_factor = self._preprocess_image(image_path, img_output_dir)
 
         context = ProcessingContext(
@@ -258,7 +295,8 @@ class Pipeline:
                 print("\n[1] Text extraction (skipped)")
 
             print("\n[2] Segmentation (SAM3)...")
-            
+            _stage("Segmenting elements (SAM3)…")
+
             if groups:
                 # 指定组提取
                 all_elements = []
@@ -285,17 +323,33 @@ class Pipeline:
             meta_path = os.path.join(img_output_dir, "sam3_metadata.json")
             self.sam3_extractor.save_metadata(context, meta_path)
 
+            print("\n[2.5] VLM text labeling...")
+            _stage("Extracting text labels (VLM)…")
+            try:
+                labeled_count = self.vlm_labeler.label_elements(
+                    context.elements,
+                    processed_image_path,
+                    canvas_width=context.canvas_width,
+                    canvas_height=context.canvas_height,
+                )
+                print(f"   {labeled_count} elements labeled with VLM text")
+            except Exception as e:
+                print(f"   VLM labeling failed: {e} — shapes will have empty labels")
+
             print("\n[3] Shape/icon processing...")
+            _stage("Processing shapes & icons…")
             result = self.icon_processor.process(context)
             print(f"   Icons: {result.metadata.get('processed_count', 0)}")
             result = self.shape_processor.process(context)
             print(f"   Shapes: {result.metadata.get('processed_count', 0)}")
 
             print("\n[4] Arrows...")
+            _stage("Detecting arrows…")
             result = self.arrow_processor.process(context)
             print(f"   Arrows: {result.metadata.get('arrows_processed', 0)}")
 
             print("\n[5] XML fragments...")
+            _stage("Building DrawIO XML…")
             self._generate_xml_fragments(context)
             xml_count = len([e for e in context.elements if e.has_xml()])
             print(f"   Fragments: {xml_count}")
@@ -397,8 +451,16 @@ class Pipeline:
                 
                 elem.layer_level = LayerLevel.BASIC_SHAPE.value
             
-            # 生成mxCell XML
-            elem.xml_fragment = f'''<mxCell id="{elem.id}" parent="1" vertex="1" value="" style="{style}">
+            # 生成mxCell XML (use VLM text label if available)
+            raw_label = getattr(elem, 'text_label', None) or ''
+            label = (
+                raw_label
+                .replace('&', '&amp;')
+                .replace('"', '&quot;')
+                .replace('<', '&lt;')
+                .replace('>', '&gt;')
+            )
+            elem.xml_fragment = f'''<mxCell id="{elem.id}" parent="1" vertex="1" value="{label}" style="{style}">
   <mxGeometry x="{elem.bbox.x1}" y="{elem.bbox.y1}" width="{elem.bbox.width}" height="{elem.bbox.height}" as="geometry"/>
 </mxCell>'''
 
@@ -406,7 +468,7 @@ class Pipeline:
 # ======================== CLI ========================
 def main():
     parser = argparse.ArgumentParser(
-        description="Edit Banana — image to DrawIO",
+        description="OpenBanana — image to DrawIO",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

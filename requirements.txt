@@ -7,5 +7,19 @@ scikit-image
 requests
 fastapi
 uvicorn[standard]
+python-multipart    # required by FastAPI for file upload (/convert endpoint)
+openai              # required by VLMLabeler (LM Studio / Ollama OpenAI-compatible API)
+
+# SAM3 dependencies
+iopath              # SAM3 model loader
+portalocker         # required by iopath (file locking)
+einops              # SAM3 rope/transformer
+timm                # SAM3 memory module (DropPath)
+pycocotools         # SAM3 training data loaders
+hydra-core          # SAM3 config
+omegaconf           # SAM3 config
+submitit            # SAM3 training utils
+torchmetrics        # SAM3 eval
 
 # SAM3 / PyTorch: install separately per your CUDA setup; see README and config.
+# For torch 2.6.0 on macOS: pip install torchvision==0.21.0

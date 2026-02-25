@@ -274,7 +274,8 @@ def parse_args() -> argparse.Namespace:
         default=os.path.join(os.path.dirname(__file__), "..", "config", "config.yaml"),
         help="Path to config.yaml",
     )
-    parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu", help="Device id")
+    default_device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+    parser.add_argument("--device", default=default_device, help="Device id")
     parser.add_argument("--cache-size", type=int, default=2, help="LRU cache size for encoded images")
     return parser.parse_args()
 

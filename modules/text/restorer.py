@@ -18,7 +18,7 @@ from typing import List, Dict, Any, Optional
 from PIL import Image
 
 # OCR 模块（相对导入）
-from .ocr.azure import AzureOCR
+from .ocr.azure import AzureOCR, OCRResult
 from .coord_processor import CoordProcessor
 from .xml_generator import MxGraphXMLGenerator
 
@@ -285,14 +285,36 @@ class TextRestorer:
         
         return str(output_path)
     
+    def _make_empty_ocr_result(self, image_path: str) -> OCRResult:
+        """Return an empty OCRResult with correct image dimensions."""
+        with Image.open(image_path) as img:
+            w, h = img.size
+        return OCRResult(image_width=w, image_height=h, text_blocks=[], styles=[])
+
     def _run_ocr(self, image_path: str):
-        """运行 OCR 识别（Azure + Pix2Text）"""
-        # Azure OCR - 文字识别
+        """运行 OCR 识别（Azure 优先，失败时自动回退到 Pix2Text 全图识别）"""
+        # ── Azure OCR（尝试）──────────────────────────────────────────────
         print("\n📖 Azure OCR...")
         azure_start = time.time()
-        azure_result = self.azure_ocr.analyze_image(image_path)
-        self.timing["azure_ocr"] = time.time() - azure_start
-        print(f"   {len(azure_result.text_blocks)} 个文字块 ({self.timing['azure_ocr']:.2f}s)")
+        azure_result = None
+        try:
+            azure_result = self.azure_ocr.analyze_image(image_path)
+            self.timing["azure_ocr"] = time.time() - azure_start
+            print(f"   {len(azure_result.text_blocks)} 个文字块 ({self.timing['azure_ocr']:.2f}s)")
+        except Exception as e:
+            self.timing["azure_ocr"] = time.time() - azure_start
+            print(f"   Azure OCR unavailable ({e})")
+            print("   ↳ Falling back to Pix2Text for full-page text + formula recognition...")
+            azure_result = self._make_empty_ocr_result(image_path)
+            # Use Pix2Text for everything (text + formulas)
+            if self.formula_engine != 'none':
+                try:
+                    formula_result = self.pix2text_ocr.analyze_image(image_path)
+                    print(f"   ↳ Pix2Text recognised {len(formula_result.blocks)} blocks")
+                    return azure_result, formula_result
+                except Exception as e2:
+                    print(f"   ↳ Pix2Text also failed: {e2}")
+            return azure_result, None
         
         # 公式识别
         formula_result = None

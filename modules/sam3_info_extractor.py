@@ -218,7 +218,7 @@ class SAM3Model(ModelWrapper):
         super().__init__()
         self.checkpoint_path = checkpoint_path
         self.bpe_path = bpe_path
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = device or ("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
         self._processor = None
         
         # 图像状态缓存
@@ -465,10 +465,17 @@ class Sam3InfoExtractor(BaseProcessor):
         
         # 组间去重
         all_elements = self._deduplicate_cross_groups(all_elements)
-        
+
         # 过滤被大图完全包含的小元素
         all_elements = self._filter_contained_elements(all_elements)
-        
+
+        # Cap total elements to avoid memory/VLM overload on dense diagrams
+        _MAX_ELEMENTS = 80
+        if len(all_elements) > _MAX_ELEMENTS:
+            before = len(all_elements)
+            all_elements = sorted(all_elements, key=lambda e: e.score, reverse=True)[:_MAX_ELEMENTS]
+            self._log(f"  Capped {before} → {_MAX_ELEMENTS} elements (kept highest-score)")
+
         context.elements = all_elements
         
         result = ProcessingResult(
@@ -886,43 +893,48 @@ class Sam3InfoExtractor(BaseProcessor):
     def _filter_contained_elements(self, elements: List[ElementInfo]) -> List[ElementInfo]:
         """
         过滤被大图完全包含的小元素
-        
+
         规则：
-        1. 如果小元素被图片类大元素包含 > 85%，只保留大元素
-        2. 图片类：icon, picture, logo, chart, function_graph
-        3. 这样可以避免大图里的小箭头/小图形被单独提取
+        1. 只有真正的图片/图标类父元素（icon, picture, logo）才触发过滤
+        2. chart/function_graph 不作为过滤父元素 —— 这些类型经常被用于标记整块
+           流程图区域，其内部的箭头和图形都是有效元素，不应被删除
+        3. 箭头/线/连接线（arrow, line, connector）永远不被过滤 —— 它们是图表的
+           结构性元素，即使在容器内部也应保留
         """
-        IMAGE_TYPES = {'icon', 'picture', 'logo', 'chart', 'function_graph', 'image'}
-        
+        # Only actual photographic elements trigger parent filtering
+        FILTER_PARENT_TYPES = {'icon', 'picture', 'logo'}
+        # Structural diagram elements — never remove these
+        PROTECTED_CHILD_TYPES = {'arrow', 'line', 'connector'}
+
         if not elements:
             return elements
-        
+
         to_remove = set()
-        
+
         for i, elem_i in enumerate(elements):
             if i in to_remove:
                 continue
-            
+
             bbox_i = elem_i.bbox.to_list()
             area_i = (bbox_i[2] - bbox_i[0]) * (bbox_i[3] - bbox_i[1])
             type_i = elem_i.element_type.lower()
-            
+
             for j, elem_j in enumerate(elements):
                 if i == j or j in to_remove:
                     continue
-                
+
                 bbox_j = elem_j.bbox.to_list()
                 area_j = (bbox_j[2] - bbox_j[0]) * (bbox_j[3] - bbox_j[1])
                 type_j = elem_j.element_type.lower()
-                
+
                 if area_i > area_j:
                     containment = self._calculate_containment(bbox_i, bbox_j)
-                    if containment > 0.85 and type_i in IMAGE_TYPES:
+                    if containment > 0.85 and type_i in FILTER_PARENT_TYPES and type_j not in PROTECTED_CHILD_TYPES:
                         to_remove.add(j)
                         self._log(f"Filter {elem_j.id}({type_j}): contained by {elem_i.id}({type_i}) {containment:.0%}")
                 elif area_j > area_i:
                     containment = self._calculate_containment(bbox_j, bbox_i)
-                    if containment > 0.85 and type_j in IMAGE_TYPES:
+                    if containment > 0.85 and type_j in FILTER_PARENT_TYPES and type_i not in PROTECTED_CHILD_TYPES:
                         to_remove.add(i)
                         self._log(f"Filter {elem_i.id}({type_i}): contained by {elem_j.id}({type_j}) {containment:.0%}")
                         break

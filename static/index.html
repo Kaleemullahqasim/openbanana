@@ -1,0 +1,724 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OpenBanana — Make the Uneditable, Editable</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; font-family: 'Inter', sans-serif; }
+
+    /* ── Screens ── */
+    #screen-landing { height: 100vh; overflow-y: auto; background: #0a0a0a; color: #e5e5e5; }
+    #screen-editor  { height: 100vh; display: none; flex-direction: column; background: #111; }
+
+    /* ── Upload drop zone ── */
+    #drop-zone {
+      border: 2px dashed #2a2a2a;
+      transition: border-color .2s, background .2s;
+      cursor: pointer;
+    }
+    #drop-zone.drag-over { border-color: #facc15; background: rgba(250,204,21,.04); }
+    #drop-zone:hover { border-color: #3a3a3a; }
+
+    /* ── Stage cards ── */
+    .stage-card { border: 1px solid #1c1c1c; transition: all .3s; }
+    .stage-card.active { border-color: #facc15; background: rgba(250,204,21,.05); }
+    .stage-card.done   { border-color: #22c55e; background: rgba(34,197,94,.05); }
+
+    .stage-dot {
+      width: 30px; height: 30px; border-radius: 50%;
+      border: 2px solid #2a2a2a; background: #161616;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px; font-weight: 600; color: #555;
+      flex-shrink: 0; transition: all .3s;
+    }
+    .stage-card.active .stage-dot { border-color: #facc15; color: #facc15; }
+    .stage-card.done   .stage-dot { border-color: #22c55e; color: #22c55e; }
+
+    /* ── Spinner ── */
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner {
+      border: 2px solid #2a2a2a; border-top-color: #facc15;
+      border-radius: 50%; animation: spin .7s linear infinite;
+    }
+
+    /* ── Progress bar ── */
+    #progress-bar { transition: width .5s ease; background: linear-gradient(90deg,#facc15,#f59e0b); }
+
+    /* ── Fade in ── */
+    @keyframes fadeUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:none; } }
+    .fade-up { animation: fadeUp .35s ease forwards; }
+
+    /* ── Editor layout ── */
+    #editor-body {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+      min-height: 0;
+    }
+
+    /* Left panel — SAM3 preview */
+    #preview-panel {
+      width: 340px;
+      min-width: 200px;
+      max-width: 560px;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid #1f1f1f;
+      overflow: hidden;
+      background: #0e0e0e;
+      flex-shrink: 0;
+    }
+
+    /* Drag handle */
+    #resizer {
+      width: 5px;
+      cursor: col-resize;
+      background: #1a1a1a;
+      flex-shrink: 0;
+      transition: background .15s;
+      position: relative;
+    }
+    #resizer:hover, #resizer.dragging { background: #facc15; }
+
+    /* Right panel — draw.io */
+    #drawio-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      overflow: hidden;
+    }
+    #drawio-frame { flex: 1; border: none; width: 100%; height: 100%; }
+
+    /* Preview image */
+    #preview-img-wrap {
+      flex: 1;
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
+    #preview-img { width: 100%; display: block; }
+
+    /* Stats pills */
+    .stat-pill {
+      display: inline-flex; align-items: center; gap: 5px;
+      background: #1a1a1a; border: 1px solid #2a2a2a;
+      border-radius: 999px; padding: 3px 10px;
+      font-size: 11px; color: #aaa;
+    }
+    .stat-dot { width: 7px; height: 7px; border-radius: 50%; }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: #111; }
+    ::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #3a3a3a; }
+
+    /* Viewer loading overlay */
+    #viewer-overlay {
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      background: #f8f7f4; z-index: 10;
+      pointer-events: none;
+    }
+    #viewer-overlay.hidden { display: none; }
+  </style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     SCREEN 1 — LANDING
+══════════════════════════════════════════════════════════════════════════ -->
+<div id="screen-landing">
+
+  <!-- Header -->
+  <header class="sticky top-0 z-50 border-b border-white/5 px-6 py-4 backdrop-blur bg-[#0a0a0a]/90">
+    <div class="max-w-5xl mx-auto flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <span class="text-xl">🍌</span>
+        <span class="font-bold text-base tracking-tight">OpenBanana</span>
+        <span class="text-[10px] bg-yellow-400/10 text-yellow-400 border border-yellow-400/20 rounded px-2 py-0.5 font-semibold uppercase tracking-wider">Research</span>
+      </div>
+      <div class="flex items-center gap-2 text-xs text-zinc-500">
+        <span class="w-1.5 h-1.5 rounded-full" id="status-dot" style="background:#3f3f3f"></span>
+        <span id="status-text">Connecting…</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Hero -->
+  <section class="px-6 pt-14 pb-8 text-center max-w-3xl mx-auto">
+    <h1 class="text-[2.6rem] font-extrabold tracking-tight leading-tight mb-4 bg-gradient-to-b from-white to-zinc-500 bg-clip-text text-transparent">
+      Make the Uneditable,<br/>Editable
+    </h1>
+    <p class="text-zinc-400 text-base leading-relaxed">
+      Transform static diagrams and PDFs into fully editable&nbsp;
+      <span class="text-yellow-400 font-semibold">DrawIO</span> documents — powered by SAM3 segmentation + multimodal LLMs.
+    </p>
+  </section>
+
+  <!-- How it works -->
+  <section class="px-6 pb-10">
+    <div class="max-w-3xl mx-auto grid grid-cols-3 gap-3">
+      <div class="bg-zinc-900/60 border border-zinc-800 rounded-xl p-4 text-center">
+        <div class="text-2xl mb-2">🔍</div>
+        <p class="text-xs font-semibold text-zinc-200 mb-1">Segmentation</p>
+        <p class="text-[11px] text-zinc-600 leading-relaxed">SAM3 detects every shape, arrow, and icon with per-pixel masks</p>
+      </div>
+      <div class="bg-zinc-900/60 border border-zinc-800 rounded-xl p-4 text-center">
+        <div class="text-2xl mb-2">📝</div>
+        <p class="text-xs font-semibold text-zinc-200 mb-1">OCR + VLM</p>
+        <p class="text-[11px] text-zinc-600 leading-relaxed">Azure OCR + multimodal LLM extract text labels and LaTeX formulas</p>
+      </div>
+      <div class="bg-zinc-900/60 border border-zinc-800 rounded-xl p-4 text-center">
+        <div class="text-2xl mb-2">✏️</div>
+        <p class="text-xs font-semibold text-zinc-200 mb-1">Reconstruction</p>
+        <p class="text-[11px] text-zinc-600 leading-relaxed">Merges spatial + style + text into a layered, editable DrawIO file</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Upload card -->
+  <section class="px-6 pb-8">
+    <div class="max-w-xl mx-auto">
+      <div
+        id="drop-zone"
+        class="rounded-2xl p-10 text-center bg-zinc-900/50"
+        onclick="document.getElementById('file-input').click()"
+      >
+        <input type="file" id="file-input" class="hidden"
+          accept=".png,.jpg,.jpeg,.pdf,.bmp,.tiff,.webp" />
+
+        <div id="drop-idle">
+          <div class="w-14 h-14 rounded-2xl bg-zinc-800 border border-zinc-700 flex items-center justify-center text-2xl mx-auto mb-4">📂</div>
+          <p class="text-sm font-semibold text-zinc-200 mb-1">Drop your diagram here</p>
+          <p class="text-xs text-zinc-600">PNG · JPG · PDF · BMP · TIFF · WebP</p>
+        </div>
+
+        <div id="drop-selected" class="hidden">
+          <div class="w-14 h-14 rounded-2xl bg-yellow-400/10 border border-yellow-400/20 flex items-center justify-center text-2xl mx-auto mb-4">📄</div>
+          <p class="text-sm font-semibold text-yellow-400" id="selected-name"></p>
+          <p class="text-xs text-zinc-500 mt-1" id="selected-size"></p>
+        </div>
+      </div>
+
+      <div class="mt-3 flex gap-2">
+        <button id="convert-btn" onclick="startConversion()"
+          class="flex-1 py-3 rounded-xl bg-yellow-400 text-black font-bold text-sm
+                 hover:bg-yellow-300 active:scale-[.98] transition-all
+                 disabled:opacity-30 disabled:cursor-not-allowed disabled:active:scale-100"
+          disabled>
+          Convert to DrawIO
+        </button>
+        <button id="demo-btn" onclick="loadDemo()"
+          class="px-5 py-3 rounded-xl border border-zinc-700 text-zinc-300 text-sm font-medium
+                 hover:border-zinc-500 hover:text-white active:scale-[.98] transition-all">
+          Load Demo
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Pipeline progress -->
+  <section id="pipeline-section" class="px-6 pb-12 hidden fade-up">
+    <div class="max-w-xl mx-auto">
+
+      <div class="h-1 bg-zinc-800/80 rounded-full mb-6 overflow-hidden">
+        <div id="progress-bar" class="h-full rounded-full w-0"></div>
+      </div>
+
+      <div class="space-y-3">
+        <div class="stage-card rounded-xl px-4 py-3 bg-zinc-900 flex items-center gap-4" id="stage-1">
+          <div class="stage-dot" id="dot-1">1</div>
+          <div class="flex-1 min-w-0">
+            <p class="text-sm font-semibold">Input &amp; Segmentation</p>
+            <p class="text-xs mt-0.5 transition-colors duration-300" id="stage-1-sub" style="color:#52525b"
+               data-original="SAM3 mask decoder — shapes, arrows, icons">SAM3 mask decoder — shapes, arrows, icons</p>
+          </div>
+          <div id="stage-1-status" class="text-xs text-zinc-600 shrink-0"></div>
+        </div>
+
+        <div class="stage-card rounded-xl px-4 py-3 bg-zinc-900 flex items-center gap-4" id="stage-2">
+          <div class="stage-dot" id="dot-2">2</div>
+          <div class="flex-1 min-w-0">
+            <p class="text-sm font-semibold">Text Labeling &amp; Shapes</p>
+            <p class="text-xs mt-0.5 transition-colors duration-300" id="stage-2-sub" style="color:#52525b"
+               data-original="VLM text labeling + color &amp; stroke extraction">VLM text labeling + color &amp; stroke extraction</p>
+          </div>
+          <div id="stage-2-status" class="text-xs text-zinc-600 shrink-0"></div>
+        </div>
+
+        <div class="stage-card rounded-xl px-4 py-3 bg-zinc-900 flex items-center gap-4" id="stage-3">
+          <div class="stage-dot" id="dot-3">3</div>
+          <div class="flex-1 min-w-0">
+            <p class="text-sm font-semibold">Reconstruction</p>
+            <p class="text-xs mt-0.5 transition-colors duration-300" id="stage-3-sub" style="color:#52525b"
+               data-original="Merge spatial + style + text → DrawIO XML">Merge spatial + style + text → DrawIO XML</p>
+          </div>
+          <div id="stage-3-status" class="text-xs text-zinc-600 shrink-0"></div>
+        </div>
+      </div>
+
+      <!-- Live operation message — prominent, always visible during processing -->
+      <div class="mt-5 flex items-center justify-center gap-2 min-h-[22px]">
+        <span id="pipeline-spinner" class="spinner hidden" style="width:12px;height:12px;border-width:2px;flex-shrink:0"></span>
+        <p class="text-sm font-medium text-yellow-400" id="pipeline-msg">Starting…</p>
+      </div>
+    </div>
+  </section>
+
+</div><!-- /screen-landing -->
+
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     SCREEN 2 — EDITOR (full page, side-by-side)
+══════════════════════════════════════════════════════════════════════════ -->
+<div id="screen-editor" class="flex flex-col">
+
+  <!-- Slim top bar -->
+  <div class="h-11 border-b border-[#1f1f1f] bg-[#0d0d0d] flex items-center px-4 gap-4 shrink-0 z-20">
+    <span class="text-base">🍌</span>
+    <span class="font-semibold text-sm text-zinc-200" id="editor-title">OpenBanana</span>
+    <div class="flex items-center gap-2" id="editor-stats"></div>
+    <div class="flex-1"></div>
+    <button onclick="downloadResult()"
+      class="px-3 py-1.5 bg-yellow-400 text-black text-xs font-bold rounded-lg hover:bg-yellow-300 transition-colors flex items-center gap-1.5">
+      <span>↓</span> Download .drawio
+    </button>
+    <button onclick="resetApp()"
+      class="px-3 py-1.5 border border-zinc-700 text-zinc-400 text-xs font-medium rounded-lg hover:border-zinc-500 hover:text-white transition-colors">
+      ← New Image
+    </button>
+  </div>
+
+  <!-- Body: left preview + resizer + right draw.io -->
+  <div id="editor-body">
+
+    <!-- ── Left: SAM3 preview ── -->
+    <div id="preview-panel">
+      <div class="px-3 py-2 border-b border-[#1f1f1f] shrink-0 flex items-center justify-between">
+        <span class="text-xs font-semibold text-zinc-400 uppercase tracking-wider">SAM3 Preview</span>
+        <span class="text-[10px] text-zinc-600" id="preview-label"></span>
+      </div>
+      <div id="preview-img-wrap">
+        <img id="preview-img" src="" alt="SAM3 segmentation" />
+        <div class="p-3 space-y-1.5" id="stats-block"></div>
+      </div>
+    </div>
+
+    <!-- ── Drag resizer ── -->
+    <div id="resizer"></div>
+
+    <!-- ── Right: draw.io editor ── -->
+    <div id="drawio-panel" class="relative">
+      <div id="viewer-overlay">
+        <div class="spinner mb-3" style="width:28px;height:28px;border-width:3px;border-color:#ddd;border-top-color:#facc15;"></div>
+        <p style="font-size:12px;color:#888;font-family:Inter,sans-serif;">Loading draw.io editor…</p>
+      </div>
+      <iframe id="drawio-frame" src="about:blank" allow="fullscreen"></iframe>
+    </div>
+
+  </div><!-- /editor-body -->
+</div><!-- /screen-editor -->
+
+
+<script>
+// ════════════════════════════════════════════════════════════════════════
+// State
+// ════════════════════════════════════════════════════════════════════════
+let currentJobId   = null;
+let currentJobName = null;
+let pollTimer      = null;
+let selectedFile   = null;
+let drawioXml      = null;
+let drawioMsgHandler = null;
+
+// ════════════════════════════════════════════════════════════════════════
+// Health check
+// ════════════════════════════════════════════════════════════════════════
+(async function checkHealth() {
+  try {
+    const r = await fetch('/health');
+    if (r.ok) {
+      document.getElementById('status-dot').style.background = '#22c55e';
+      document.getElementById('status-text').textContent = 'Server online';
+    } else throw 0;
+  } catch {
+    document.getElementById('status-dot').style.background = '#ef4444';
+    document.getElementById('status-text').textContent = 'Server offline';
+  }
+})();
+
+// ════════════════════════════════════════════════════════════════════════
+// File selection
+// ════════════════════════════════════════════════════════════════════════
+const fileInput = document.getElementById('file-input');
+const dropZone  = document.getElementById('drop-zone');
+
+fileInput.addEventListener('change', () => { if (fileInput.files[0]) selectFile(fileInput.files[0]); });
+dropZone.addEventListener('dragover',  e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault(); dropZone.classList.remove('drag-over');
+  if (e.dataTransfer.files[0]) selectFile(e.dataTransfer.files[0]);
+});
+
+function selectFile(file) {
+  selectedFile = file;
+  document.getElementById('drop-idle').classList.add('hidden');
+  document.getElementById('drop-selected').classList.remove('hidden');
+  document.getElementById('selected-name').textContent = file.name;
+  document.getElementById('selected-size').textContent = fmtSize(file.size);
+  document.getElementById('convert-btn').disabled = false;
+}
+
+function fmtSize(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+  return (b/1048576).toFixed(1) + ' MB';
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// Conversion
+// ════════════════════════════════════════════════════════════════════════
+async function startConversion() {
+  if (!selectedFile) return;
+  document.getElementById('convert-btn').disabled = true;
+  document.getElementById('demo-btn').disabled    = true;
+
+  showPipeline();
+  setStage(1, 'active', 'Uploading…');
+
+  const form = new FormData();
+  form.append('file', selectedFile);
+
+  try {
+    const res = await fetch('/convert', { method: 'POST', body: form });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Upload failed' }));
+      throw new Error(err.detail || 'Upload failed');
+    }
+    const data = await res.json();
+    currentJobId = data.job_id;
+    setStage(1, 'active', 'Segmenting…');
+    pipelineMsg('SAM3 segmenting elements…');
+    pollJob();
+  } catch (e) {
+    pipelineError(e.message);
+  }
+}
+
+// Map stage message prefixes → {stageNum, progressMin, progressMax}
+const STAGE_MAP = [
+  { match: 'Queued',          n: 1, pMin:  5, pMax: 10 },
+  { match: 'Loading',         n: 1, pMin: 10, pMax: 20 },
+  { match: 'Preprocessing',   n: 1, pMin: 20, pMax: 30 },
+  { match: 'Segmenting',      n: 1, pMin: 30, pMax: 55 },
+  { match: 'Extracting text', n: 2, pMin: 55, pMax: 65 },
+  { match: 'Processing shape',n: 2, pMin: 65, pMax: 75 },
+  { match: 'Detecting',       n: 2, pMin: 75, pMax: 82 },
+  { match: 'Building',        n: 3, pMin: 82, pMax: 95 },
+];
+
+let _lastStageN = 0;
+
+function applyStage(stageMsg) {
+  if (!stageMsg) return;
+  for (const s of STAGE_MAP) {
+    if (stageMsg.startsWith(s.match)) {
+      // Advance previous stage cards to done
+      for (let i = 1; i < s.n; i++) setStage(i, 'done', 'Done');
+      setStage(s.n, 'active', stageMsg);
+      if (s.n !== _lastStageN) { setBar(s.pMin); _lastStageN = s.n; }
+      pipelineMsg(stageMsg);
+      return;
+    }
+  }
+}
+
+function pollJob() {
+  let elapsed = 0;
+  _lastStageN = 0;
+  clearInterval(pollTimer);
+
+  pollTimer = setInterval(async () => {
+    elapsed += 2;
+    // Slow creep on progress bar while waiting (never reaches 97%)
+    const cur = parseFloat(document.getElementById('progress-bar').style.width) || 0;
+    if (cur < 97) setBar(Math.min(97, cur + 0.4));
+
+    try {
+      const res = await fetch(`/job/${currentJobId}`);
+      if (!res.ok) return;
+      const job = await res.json();
+
+      // Use live stage from server if available
+      if (job.stage) applyStage(job.stage);
+
+      if (job.status === 'done') {
+        clearInterval(pollTimer);
+        currentJobName = job.job_name;
+        setStage(1,'done','Done'); setStage(2,'done','Done'); setStage(3,'done','Done');
+        setBar(100);
+        pipelineMsg('Complete — opening editor…');
+        await showEditor(job.job_name, job.element_count);
+      } else if (job.status === 'error') {
+        clearInterval(pollTimer);
+        pipelineError(job.error || 'Pipeline failed');
+      }
+    } catch { /* network blip */ }
+  }, 2000);
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// Demo
+// ════════════════════════════════════════════════════════════════════════
+async function loadDemo() {
+  document.getElementById('demo-btn').disabled    = true;
+  document.getElementById('convert-btn').disabled = true;
+  document.getElementById('demo-btn').textContent = 'Loading…';
+
+  showPipeline();
+  setStage(1,'done','Done'); setStage(2,'done','Done'); setStage(3,'done','Done');
+  setBar(100); pipelineMsg('Demo loaded.');
+  await showEditor('TestSeg', null);
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// Editor screen
+// ════════════════════════════════════════════════════════════════════════
+async function showEditor(jobName, elementCount) {
+  try {
+    const xmlRes = await fetch(`/result/${jobName}`);
+    if (!xmlRes.ok) throw new Error('Could not load result XML');
+    drawioXml      = await xmlRes.text();
+    currentJobName = jobName;
+
+    // Switch screens
+    document.getElementById('screen-landing').style.display = 'none';
+    const editorEl = document.getElementById('screen-editor');
+    editorEl.style.display = 'flex';
+
+    // Top bar labels
+    document.getElementById('editor-title').textContent = jobName;
+    if (elementCount) {
+      document.getElementById('editor-stats').innerHTML =
+        `<span class="stat-pill"><span class="stat-dot" style="background:#facc15"></span>${elementCount} elements</span>`;
+    }
+
+    // SAM3 preview
+    document.getElementById('preview-img').src = `/preview/${jobName}?t=${Date.now()}`;
+    document.getElementById('preview-label').textContent = 'segmentation overlay';
+
+    // Try to parse element stats from XML for the stats block
+    buildStatsBlock(drawioXml);
+
+    // Init draw.io full editor
+    initDrawio(drawioXml);
+
+  } catch (e) {
+    pipelineError(e.message);
+  }
+}
+
+function buildStatsBlock(xml) {
+  const shapes  = (xml.match(/vertex="1"/g) || []).length;
+  const arrows  = (xml.match(/edge="1"/g) || []).length;
+  const block   = document.getElementById('stats-block');
+  block.innerHTML = `
+    <p class="text-[10px] uppercase tracking-widest text-zinc-600 font-semibold mb-2">Element breakdown</p>
+    <div class="flex flex-wrap gap-1.5">
+      <span class="stat-pill"><span class="stat-dot" style="background:#60a5fa"></span>Shapes: ${shapes}</span>
+      <span class="stat-pill"><span class="stat-dot" style="background:#f97316"></span>Arrows: ${arrows}</span>
+    </div>
+    <p class="text-[10px] text-zinc-700 mt-3 leading-relaxed">
+      Click any element in the draw.io editor to select and modify it.
+      Drag to reposition. Double-click to edit text.
+    </p>`;
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// Draw.io full editor embed
+// ════════════════════════════════════════════════════════════════════════
+function initDrawio(xml) {
+  const frame   = document.getElementById('drawio-frame');
+  const overlay = document.getElementById('viewer-overlay');
+
+  overlay.classList.remove('hidden');
+
+  // Remove previous handler
+  if (drawioMsgHandler) window.removeEventListener('message', drawioMsgHandler);
+
+  drawioMsgHandler = (evt) => {
+    if (!evt.origin.includes('diagrams.net')) return;
+    let msg;
+    try { msg = JSON.parse(evt.data); } catch { return; }
+
+    if (msg.event === 'init') {
+      // Load XML into editor
+      frame.contentWindow.postMessage(JSON.stringify({
+        action: 'load',
+        xml: xml,
+        autoresize: false,
+      }), '*');
+    }
+    if (msg.event === 'load') {
+      overlay.classList.add('hidden');
+    }
+    // Handle save → download
+    if (msg.event === 'save') {
+      const blob = new Blob([msg.xml || xml], { type: 'application/xml' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `${currentJobName || 'diagram'}.drawio`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+  };
+  window.addEventListener('message', drawioMsgHandler);
+
+  // Full editor (no ui=min, no noSaveBtn → shows full toolbar + panels)
+  frame.src = 'https://embed.diagrams.net/?embed=1&proto=json&spin=1&saveAndExit=0&noExitBtn=1';
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// Download
+// ════════════════════════════════════════════════════════════════════════
+function downloadResult() {
+  if (!currentJobName) return;
+  const a = document.createElement('a');
+  a.href = `/result/${currentJobName}`;
+  a.download = `${currentJobName}.drawio`;
+  a.click();
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// Reset
+// ════════════════════════════════════════════════════════════════════════
+function resetApp() {
+  clearInterval(pollTimer);
+  currentJobId = currentJobName = drawioXml = selectedFile = null;
+
+  if (drawioMsgHandler) { window.removeEventListener('message', drawioMsgHandler); drawioMsgHandler = null; }
+  document.getElementById('drawio-frame').src = 'about:blank';
+  document.getElementById('viewer-overlay').classList.remove('hidden');
+
+  // Restore landing screen
+  document.getElementById('screen-editor').style.display  = 'none';
+  document.getElementById('screen-landing').style.display = '';
+
+  // Reset pipeline
+  [1,2,3].forEach(n => {
+    document.getElementById(`stage-${n}`).classList.remove('active','done');
+    document.getElementById(`dot-${n}`).innerHTML = n;
+    document.getElementById(`stage-${n}-status`).textContent = '';
+    const sub = document.getElementById(`stage-${n}-sub`);
+    if (sub) { sub.textContent = sub.dataset.original || sub.textContent; sub.style.color = '#52525b'; }
+  });
+  const sp = document.getElementById('pipeline-spinner');
+  if (sp) sp.classList.add('hidden');
+  setBar(0);
+  document.getElementById('progress-bar').style.background = '';
+  document.getElementById('pipeline-section').classList.add('hidden');
+
+  // Reset upload
+  document.getElementById('drop-idle').classList.remove('hidden');
+  document.getElementById('drop-selected').classList.add('hidden');
+  document.getElementById('convert-btn').disabled = true;
+  document.getElementById('demo-btn').disabled    = false;
+  document.getElementById('demo-btn').textContent = 'Load Demo';
+  fileInput.value = '';
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// Pipeline UI helpers
+// ════════════════════════════════════════════════════════════════════════
+function showPipeline() {
+  const s = document.getElementById('pipeline-section');
+  s.classList.remove('hidden');
+  s.classList.add('fade-up');
+}
+
+function setStage(n, state, label) {
+  const card   = document.getElementById(`stage-${n}`);
+  const dot    = document.getElementById(`dot-${n}`);
+  const status = document.getElementById(`stage-${n}-status`);
+  const sub    = document.getElementById(`stage-${n}-sub`);
+  card.classList.remove('active','done');
+  card.classList.add(state);
+
+  if (state === 'active') {
+    dot.innerHTML = `<div class="spinner" style="width:14px;height:14px;border-width:2px"></div>`;
+    status.innerHTML = '';
+    // Update the card subtitle with the live operation name
+    if (sub && label) {
+      sub.textContent = label;
+      sub.style.color = '#facc15';  // yellow
+    }
+  } else {
+    dot.innerHTML = state === 'done'
+      ? `<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2.5 7L5.5 10L11.5 4" stroke="#22c55e" stroke-width="2" stroke-linecap="round"/></svg>`
+      : n;
+    status.innerHTML = state === 'done'
+      ? `<span class="text-green-400 text-xs">✓ Done</span>`
+      : '';
+    // Restore original subtitle text
+    if (sub) {
+      sub.textContent = sub.dataset.original || sub.textContent;
+      sub.style.color = state === 'done' ? '#4ade80' : '#52525b';  // green or gray
+    }
+  }
+}
+
+function pipelineMsg(msg) {
+  document.getElementById('pipeline-msg').textContent = msg;
+  const sp = document.getElementById('pipeline-spinner');
+  if (sp) sp.classList.toggle('hidden', !msg || msg === 'Complete — opening editor…');
+}
+
+function setBar(pct) {
+  document.getElementById('progress-bar').style.width = pct + '%';
+}
+
+function pipelineError(msg) {
+  pipelineMsg('Error: ' + msg);
+  document.getElementById('progress-bar').style.background = '#ef4444';
+  document.getElementById('convert-btn').disabled = false;
+  document.getElementById('demo-btn').disabled    = false;
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// Resizable split panel
+// ════════════════════════════════════════════════════════════════════════
+(function initResizer() {
+  const resizer  = document.getElementById('resizer');
+  const leftPanel = document.getElementById('preview-panel');
+  let dragging = false, startX = 0, startW = 0;
+
+  resizer.addEventListener('mousedown', e => {
+    dragging = true; startX = e.clientX; startW = leftPanel.offsetWidth;
+    resizer.classList.add('dragging');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  });
+  document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const newW = Math.max(180, Math.min(startW + e.clientX - startX, window.innerWidth - 600));
+    leftPanel.style.width = newW + 'px';
+  });
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    resizer.classList.remove('dragging');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  });
+})();
+</script>
+</body>
+</html>

@@ -1509,8 +1509,18 @@ class BasicShapeProcessor(BaseProcessor):
         
         # DrawIO的id必须从2开始（0和1是保留的根元素）
         cell_id = elem.id + 2
-        
-        return f'''<mxCell id="{cell_id}" parent="1" vertex="1" value="" style="{style}">
+
+        # Use VLM-extracted text label as the cell value (XML-attribute safe)
+        raw_label = getattr(elem, 'text_label', None) or ''
+        label = (
+            raw_label
+            .replace('&', '&amp;')
+            .replace('"', '&quot;')
+            .replace('<', '&lt;')
+            .replace('>', '&gt;')
+        )
+
+        return f'''<mxCell id="{cell_id}" parent="1" vertex="1" value="{label}" style="{style}">
   <mxGeometry x="{elem.bbox.x1}" y="{elem.bbox.y1}" width="{elem.bbox.width}" height="{elem.bbox.height}" as="geometry"/>
 </mxCell>'''
     

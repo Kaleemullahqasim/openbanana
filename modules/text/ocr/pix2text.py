@@ -70,7 +70,7 @@ class Pix2TextOCR:
                 print(f"公式: {block.text}")
     """
     
-    def __init__(self, device: str = 'cuda', languages: tuple = ('en',)):
+    def __init__(self, device: str = 'cuda' if __import__('torch').cuda.is_available() else 'cpu', languages: tuple = ('en',)):
         """
         初始化 Pix2Text
         

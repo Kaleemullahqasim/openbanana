@@ -127,6 +127,7 @@ class ElementInfo:
     # === 元数据 ===
     source_prompt: Optional[str] = None          # 触发此元素识别的prompt
     processing_notes: List[str] = field(default_factory=list)  # 处理过程中的备注
+    text_label: Optional[str] = None             # VLM-extracted text label (displayed inside shape)
     
     def has_xml(self) -> bool:
         """检查是否已生成XML"""
