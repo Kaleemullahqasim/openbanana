@@ -41,6 +41,10 @@ sam3_output/
 
 # (Frontend removed; algorithm-only repo)
 
+# AI agent context files (local only)
+AGENTS.md
+**/AGENTS.md
+
 # IDE & System
 .vscode/
 .idea/
