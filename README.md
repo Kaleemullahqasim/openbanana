@@ -3,51 +3,57 @@
 </p>
 
 <h1 align="center">OpenBanana</h1>
-<p align="center"><em>Turn any diagram image into a fully editable DrawIO file</em></p>
+<p align="center"><em>Turn any diagram image into a fully editable DrawIO file — runs entirely on your machine</em></p>
 
 <p align="center">
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.9+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python"/></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-2F80ED?style=flat-square&logo=apache&logoColor=white" alt="License"/></a>
-  <a href="https://developer.apple.com/metal/"><img src="https://img.shields.io/badge/Apple_Silicon-MPS_Supported-black?style=flat-square&logo=apple&logoColor=white" alt="MPS"/></a>
-  <a href="https://developer.nvidia.com/cuda-downloads"><img src="https://img.shields.io/badge/GPU-CUDA_Supported-76B900?style=flat-square&logo=nvidia" alt="CUDA"/></a>
+  <a href="https://developer.apple.com/metal/"><img src="https://img.shields.io/badge/Apple_M--series-MPS_Ready-black?style=flat-square&logo=apple&logoColor=white" alt="Apple Silicon"/></a>
+  <a href="https://developer.nvidia.com/cuda-downloads"><img src="https://img.shields.io/badge/NVIDIA-CUDA_Supported-76B900?style=flat-square&logo=nvidia" alt="CUDA"/></a>
 </p>
 
 ---
 
-Upload a PNG, JPG, or PDF of a flowchart, architecture diagram, UML diagram, or any technical drawing. OpenBanana segments every element — shapes, arrows, icons, and text — and outputs a `.drawio` file where each one is independently selectable, movable, and editable.
+OpenBanana takes a screenshot, scan, or export of any diagram — flowchart, system architecture, UML, network map — and reconstructs it as a `.drawio` file. Every shape, arrow, and label becomes a real, independently editable element. No cloud, no API keys, no subscriptions.
 
 ## How it works
 
 ```
-Input (image or PDF)
-  ↓  Auto-resize if wider/taller than 1500 px
-  ↓  SAM3 segmentation — shapes, arrows, icons, background
-  ↓  VLM text labeling — per-shape OCR via local vision model
-  ↓  Color, stroke, and fill extraction
-  ↓  Arrow direction and endpoint detection
-  ↓  DrawIO XML assembly
-Output (.drawio file)
+Image or PDF
+  ↓  Downscale if either dimension exceeds 1500 px
+  ↓  SAM3 segments the diagram into shapes, arrows, icons, and background regions
+  ↓  Each segment is cropped and sent to a local vision model for text extraction
+  ↓  Fill color, stroke, and style are extracted per element
+  ↓  Arrow endpoints and direction are detected
+  ↓  All elements are assembled into layered DrawIO XML
+.drawio file
 ```
 
-## Demo
+## What runs locally
 
-| Input | Output |
-|-------|--------|
-| <img src="static/demo/original_1.jpg" width="340"/> | <img src="static/demo/recon_1.png" width="340"/> |
-| <img src="static/demo/original_2.png" width="340"/> | <img src="static/demo/recon_2.png" width="340"/> |
-| <img src="static/demo/original_3.jpg" width="340"/> | <img src="static/demo/recon_3.png" width="340"/> |
+OpenBanana is designed to run entirely on your own hardware:
 
-> Every shape, label, and arrow in the output is an independently editable element in DrawIO.
+- **SAM3 segmentation** runs as a local FastAPI service on port 8001. It uses your GPU (CUDA) or Apple Neural Engine / MPS on Apple Silicon Macs (M1 through M3).
+- **Text labeling** is handled by a local vision LLM served through [LM Studio](https://lmstudio.ai/) on port 1234. Any OpenAI-compatible local server works — LM Studio, Ollama, llama.cpp with an HTTP frontend, etc. We use `allenai/olmocr-2-7b` which is optimized for OCR tasks.
+- **No data leaves your machine.** Nothing is sent to external APIs unless you explicitly configure a remote model endpoint.
 
-## Features
+## Running on Apple Silicon (M1 / M2 / M3)
 
-- **SAM3 segmentation** — fine-tuned on diagram elements; handles shapes, arrows, icons, and background regions
-- **Local VLM text labeling** — crops each detected shape and sends it to a local vision model for OCR; no cloud API needed
-- **Runs fully offline** — segmentation and text extraction both run on your own hardware
-- **Apple Silicon support** — MPS fallback for ops not yet implemented on Metal
-- **Auto-resize** — images larger than 1500 px on either axis are downscaled before segmentation
-- **Segment cap** — keeps the top 80 highest-confidence segments to avoid slowdowns on dense diagrams
-- **Live progress** — web UI shows each pipeline stage in real time
+OpenBanana works well on Apple M-series Macs. A few things to know:
+
+SAM3 uses some PyTorch ops that are not yet implemented for MPS. The `PYTORCH_ENABLE_MPS_FALLBACK=1` environment variable tells PyTorch to fall those specific ops back to CPU while keeping everything else on the Metal backend. In practice this means you get near-native speed for most of the segmentation work.
+
+```bash
+# Always prefix server and CLI commands with this on Apple Silicon:
+PYTORCH_ENABLE_MPS_FALLBACK=1 python server_pa.py
+PYTORCH_ENABLE_MPS_FALLBACK=1 python main.py -i input/diagram.png
+```
+
+Also: torch 2.6.0 requires torchvision 0.21.0 specifically on macOS. The `pip install torchvision` default will install a newer incompatible version.
+
+```bash
+pip install torchvision==0.21.0
+```
 
 ## Setup
 
@@ -57,17 +63,17 @@ Output (.drawio file)
 git clone https://github.com/Kaleemullahqasim/openbanana.git
 cd openbanana
 pip install -r requirements.txt
+pip install torchvision==0.21.0   # macOS / torch 2.6.0
 ```
 
-> PyTorch must be installed separately — see [pytorch.org/get-started/locally](https://pytorch.org/get-started/locally/).
-> For torch 2.6.0 on macOS: `pip install torchvision==0.21.0`
+Install PyTorch separately for your hardware: [pytorch.org/get-started/locally](https://pytorch.org/get-started/locally/)
 
-### 2. Get model weights
+### 2. Download SAM3 weights
 
-| File | Where to get it | Put it at |
-|------|-----------------|-----------|
-| SAM3 checkpoint | [ModelScope — facebook/sam3](https://modelscope.cn/models/facebook/sam3) | `models/sam3/sam3.pt` |
-| BPE vocab | bundled with the SAM3 download | `models/bpe_simple_vocab_16e6.txt.gz` |
+| File | Source | Place at |
+|------|--------|----------|
+| `sam3.pt` | [ModelScope — facebook/sam3](https://modelscope.cn/models/facebook/sam3) | `models/sam3/sam3.pt` |
+| `bpe_simple_vocab_16e6.txt.gz` | Bundled in the same ModelScope download | `models/bpe_simple_vocab_16e6.txt.gz` |
 
 ### 3. Configure
 
@@ -75,35 +81,69 @@ pip install -r requirements.txt
 cp config/config.yaml.example config/config.yaml
 ```
 
-Open `config/config.yaml` and set:
-- `sam3.checkpoint_path` — path to `sam3.pt`
-- `sam3.bpe_path` — path to `bpe_simple_vocab_16e6.txt.gz`
-- `multimodal.local_model` — your LM Studio model name (default: `allenai/olmocr-2-7b`)
+Minimum required edits in `config/config.yaml`:
 
-### 4. (Optional) Local VLM for text labels
+```yaml
+sam3:
+  checkpoint_path: "models/sam3/sam3.pt"
+  bpe_path: "models/bpe_simple_vocab_16e6.txt.gz"
 
-Text extraction uses a local vision model served by [LM Studio](https://lmstudio.ai/):
+multimodal:
+  local_base_url: "http://localhost:1234/v1"   # LM Studio default
+  local_api_key:  "lm-studio"
+  local_model:    "allenai/olmocr-2-7b"        # or any vision model you have loaded
+```
 
-1. Install LM Studio and download `allenai/olmocr-2-7b`
-2. Go to **Developer → Start Server**
+To use Ollama instead of LM Studio:
 
-If LM Studio is not running, the pipeline still completes — shapes will just have empty labels.
+```yaml
+multimodal:
+  local_base_url: "http://localhost:11434/v1"
+  local_api_key:  "ollama"
+  local_model:    "llava"   # or whichever multimodal model you have pulled
+```
 
-## Usage
+### 4. Set up local LLM (for text extraction)
+
+Text inside shapes is extracted by a local vision model. Without it the pipeline still runs — shapes will just have no labels.
+
+**LM Studio:**
+1. Download [LM Studio](https://lmstudio.ai/) and install `allenai/olmocr-2-7b`
+2. Go to **Developer → Start Server** (starts on port 1234)
+
+**Ollama:**
+```bash
+ollama pull llava
+ollama serve
+```
+
+## Running
+
+### Start the SAM3 service
+
+The segmentation model runs as a separate process. Start it before the web server or CLI:
+
+```bash
+# Apple Silicon
+PYTORCH_ENABLE_MPS_FALLBACK=1 python -m sam3_service.server --port 8001 --device mps
+
+# CUDA
+python -m sam3_service.server --port 8001 --device cuda
+```
 
 ### Web UI
 
 ```bash
-# Apple Silicon (MPS)
+# Apple Silicon
 PYTORCH_ENABLE_MPS_FALLBACK=1 python server_pa.py
 
 # CUDA / CPU
 python server_pa.py
 ```
 
-Open [http://localhost:8000](http://localhost:8000), upload your image or PDF, and download the result.
+Open [http://localhost:8000](http://localhost:8000), upload an image or PDF, and download the `.drawio` result. The UI shows live progress through each pipeline stage.
 
-### Command line
+### CLI
 
 ```bash
 # Single image
@@ -112,73 +152,74 @@ PYTORCH_ENABLE_MPS_FALLBACK=1 python main.py -i input/diagram.png
 # All images in input/
 PYTORCH_ENABLE_MPS_FALLBACK=1 python main.py
 
-# Skip text extraction
+# Skip text extraction (faster, no LLM needed)
 python main.py -i input/diagram.png --no-text
 
-# Only specific element types
+# Process only specific element types
 python main.py -i input/diagram.png --groups shape arrow
 
-# With iterative refinement pass
+# Run a refinement pass after the initial output
 python main.py -i input/diagram.png --refine
 ```
 
-Results are saved to `output/<filename>/`.
+Output is saved to `output/<filename>/`.
 
 ## Architecture
 
-The pipeline runs as a series of processors that share a `ProcessingContext` object:
+All processors share a `ProcessingContext` that is passed through the pipeline in `main.py`:
 
 ```
-main.py  →  ProcessingContext
-             ├── TextRestorer          OCR pass on full image (Azure or VLM fallback)
-             ├── Sam3InfoExtractor     SAM3 segmentation → ElementInfo list
-             ├── IconPictureProcessor  Icons/images → base64 embedded in XML
-             ├── BasicShapeProcessor   Color & stroke → DrawIO style strings
-             ├── ArrowProcessor        Arrow direction & endpoint detection
-             └── XMLMerger             Combine fragments by layer → .drawio output
+Input
+  ↓ TextRestorer          Full-image OCR pass (optional, Azure or local VLM)
+  ↓ Sam3InfoExtractor     Calls the SAM3 service; builds a list of ElementInfo objects
+  ↓ IconPictureProcessor  Encodes icon/image segments as base64
+  ↓ BasicShapeProcessor   Extracts fill color and stroke; produces DrawIO style strings
+  ↓ ArrowProcessor        Determines arrow direction and connects endpoints
+  ↓ XMLMerger             Sorts elements by layer and writes the final .drawio file
+Output
 ```
 
-Layer order (bottom → top): `BACKGROUND → BASIC_SHAPE → IMAGE → ARROW → TEXT`
+Layer order (bottom to top): `BACKGROUND → BASIC_SHAPE → IMAGE → ARROW → TEXT`
 
 Key files:
 
-| File | Purpose |
-|------|---------|
-| `modules/data_types.py` | `ElementInfo`, `ProcessingContext`, `ElementType`, `LayerLevel` |
-| `modules/sam3_info_extractor.py` | SAM3 client call, returns list of `ElementInfo` |
-| `modules/vlm_labeler.py` | Per-shape VLM OCR |
-| `modules/xml_merger.py` | Final DrawIO assembly |
-| `sam3_service/server.py` | Standalone SAM3 inference service (FastAPI) |
-| `config/config.yaml` | Runtime config |
+| File | What it does |
+|------|-------------|
+| `modules/data_types.py` | Shared types: `ElementInfo`, `ProcessingContext`, `LayerLevel` |
+| `modules/sam3_info_extractor.py` | SAM3 service client; returns segmented elements |
+| `modules/vlm_labeler.py` | Crops each shape and queries the local vision model |
+| `modules/xml_merger.py` | Assembles the final DrawIO XML document |
+| `sam3_service/server.py` | FastAPI wrapper around the SAM3 model |
+| `config/config.yaml` | All runtime settings |
 
 ## Roadmap
 
 | Feature | Status |
 |---------|--------|
-| SAM3 segmentation + DrawIO export | ✅ Done |
-| Local VLM text labeling | ✅ Done |
-| Auto-resize for large images | ✅ Done |
+| SAM3 segmentation → DrawIO export | ✅ Done |
+| Local VLM text labeling (LM Studio / Ollama) | ✅ Done |
+| Apple Silicon (MPS) support | ✅ Done |
+| Auto-downscale large images | ✅ Done |
 | Live pipeline progress in web UI | ✅ Done |
-| Segment confidence cap | ✅ Done |
+| Segment confidence cap (top 80) | ✅ Done |
 | Smart arrow-to-shape connection | 🔄 In progress |
 | PPTX export | 📍 Planned |
 | Batch PDF processing | 📍 Planned |
 
 ## Contributing
 
-Pull requests are welcome. For larger changes, open an issue first to discuss the approach.
+Open an issue first for anything non-trivial. For small fixes, a PR is fine directly.
 
 ```bash
 git checkout -b feature/your-feature
-# make changes
-git commit -m 'feat: describe what you did'
+git commit -m 'feat: what you changed and why'
 git push origin feature/your-feature
 # open a pull request
 ```
 
 ## Acknowledgements
 
-OpenBanana builds on [SAM3](https://modelscope.cn/models/facebook/sam3) (Segment Anything Model 3) by Meta. The segmentation model used here was fine-tuned on diagram elements by the original Edit Banana research team at BIT.
+OpenBanana was inspired by the Edit Banana project from the BIT DataLab research group, which first demonstrated the idea of using SAM-based segmentation to reconstruct diagrams as editable files. The fine-tuned SAM3 weights used here come from that work. OpenBanana takes that foundation in a new direction: a fully local, open-source tool anyone can run on their own machine without cloud dependencies.
 
 ## License
 
