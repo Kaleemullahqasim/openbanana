@@ -1,0 +1,15 @@
+cff-version: 1.2.0
+message: "If you use this work, please cite it as below."
+title: "OpenBanana: Editable Diagram Recovery from Static Images and PDFs"
+abstract: "Converts static diagram images and PDFs into editable DrawIO XML using fine-tuned SAM3 segmentation and local vision-language models."
+type: software
+authors:
+  - family-names: "Qasim"
+    given-names: "Kaleem Ullah"
+    orcid: "https://orcid.org/0000-0002-0102-3816"
+    affiliation: "Southwest Jiaotong University"
+  - family-names: "Zhang"
+    given-names: "Jiashu"
+    affiliation: "Southwest Jiaotong University"
+repository-code: "https://github.com/Kaleemullahqasim/openbanana"
+license: MIT
